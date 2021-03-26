@@ -11,13 +11,13 @@ const LIBPATH_list = String[]
 export libopenblas
 
 # These get calculated in __init__()
-PATH = Ref("")
-LIBPATH = Ref("")
+const PATH = Ref("")
+const LIBPATH = Ref("")
 artifact_dir = ""
 libopenblas_handle = C_NULL
 libopenblas_path = ""
 
-if arch(HostPlatform()) in ("x86_64", "powerpc64le")
+if Base.USE_BLAS64
     const libsuffix = "64_"
 else
     const libsuffix = ""
@@ -35,7 +35,7 @@ function __init__()
     global libopenblas_handle = dlopen(libopenblas)
     global libopenblas_path = dlpath(libopenblas_handle)
     global artifact_dir = dirname(Sys.BINDIR)
-    global LIBPATH[] = dirname(libopenblas_path)
+    LIBPATH[] = dirname(libopenblas_path)
     push!(LIBPATH_list, LIBPATH[])
 end
 

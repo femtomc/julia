@@ -30,7 +30,7 @@ extern "C" {
 // TODO: put WeakRefs on the weak_refs list during deserialization
 // TODO: handle finalizers
 
-#define NUM_TAGS    146
+#define NUM_TAGS    147
 
 // An array of references that need to be restored from the sysimg
 // This is a manually constructed dual of the gvars array, which would be produced by codegen for Julia code, for C.
@@ -68,6 +68,8 @@ jl_value_t **const*const get_tags(void) {
         INSERT_TAG(jl_returnnode_type);
         INSERT_TAG(jl_const_type);
         INSERT_TAG(jl_partial_struct_type);
+        INSERT_TAG(jl_partial_opaque_type);
+        INSERT_TAG(jl_interconditional_type);
         INSERT_TAG(jl_method_match_type);
         INSERT_TAG(jl_pinode_type);
         INSERT_TAG(jl_phinode_type);
@@ -88,6 +90,7 @@ jl_value_t **const*const get_tags(void) {
         INSERT_TAG(jl_typename_type);
         INSERT_TAG(jl_builtin_type);
         INSERT_TAG(jl_code_info_type);
+        INSERT_TAG(jl_opaque_closure_type);
         INSERT_TAG(jl_task_type);
         INSERT_TAG(jl_uniontype_type);
         INSERT_TAG(jl_abstractstring_type);
@@ -131,9 +134,9 @@ jl_value_t **const*const get_tags(void) {
         INSERT_TAG(jl_llvmpointer_typename);
         INSERT_TAG(jl_array_typename);
         INSERT_TAG(jl_type_typename);
-        INSERT_TAG(jl_vararg_typename);
         INSERT_TAG(jl_namedtuple_typename);
         INSERT_TAG(jl_vecelement_typename);
+        INSERT_TAG(jl_opaque_closure_typename);
 
         // special exceptions
         INSERT_TAG(jl_errorexception_type);
@@ -176,7 +179,6 @@ jl_value_t **const*const get_tags(void) {
         INSERT_TAG(jl_builtin_issubtype);
         INSERT_TAG(jl_builtin_isa);
         INSERT_TAG(jl_builtin_typeassert);
-        INSERT_TAG(jl_builtin__apply);
         INSERT_TAG(jl_builtin__apply_iterate);
         INSERT_TAG(jl_builtin_isdefined);
         INSERT_TAG(jl_builtin_nfields);
@@ -236,14 +238,14 @@ void *native_functions;
 // This is a manually constructed dual of the fvars array, which would be produced by codegen for Julia code, for C.
 static const jl_fptr_args_t id_to_fptrs[] = {
     &jl_f_throw, &jl_f_is, &jl_f_typeof, &jl_f_issubtype, &jl_f_isa,
-    &jl_f_typeassert, &jl_f__apply, &jl_f__apply_iterate, &jl_f__apply_pure,
-    &jl_f__apply_latest, &jl_f__apply_in_world, &jl_f_isdefined,
+    &jl_f_typeassert, &jl_f__apply_iterate, &jl_f__apply_pure,
+    &jl_f__call_latest, &jl_f__call_in_world, &jl_f_isdefined,
     &jl_f_tuple, &jl_f_svec, &jl_f_intrinsic_call, &jl_f_invoke_kwsorter,
     &jl_f_getfield, &jl_f_setfield, &jl_f_fieldtype, &jl_f_nfields,
     &jl_f_arrayref, &jl_f_const_arrayref, &jl_f_arrayset, &jl_f_arraysize, &jl_f_apply_type,
     &jl_f_applicable, &jl_f_invoke, &jl_f_sizeof, &jl_f__expr, &jl_f__typevar,
     &jl_f_ifelse, &jl_f__structtype, &jl_f__abstracttype, &jl_f__primitivetype,
-    &jl_f__typebody, &jl_f__setsuper, &jl_f__equiv_typedef,
+    &jl_f__typebody, &jl_f__setsuper, &jl_f__equiv_typedef, &jl_f_opaque_closure_call,
     NULL };
 
 typedef struct {

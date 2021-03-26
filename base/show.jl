@@ -396,7 +396,7 @@ show_default(io::IO, @nospecialize(x)) = _show_default(io, inferencebarrier(x))
 
 function _show_default(io::IO, @nospecialize(x))
     t = typeof(x)
-    show(io, inferencebarrier(t))
+    show(io, inferencebarrier(t)::DataType)
     print(io, '(')
     nf = nfields(x)
     nb = sizeof(x)::Int
@@ -522,26 +522,12 @@ function makeproper(io::IO, x::Type)
             end
         end
     end
-    if x isa Union
-        y = []
-        normal = true
-        for typ in uniontypes(x)
-            if isa(typ, TypeVar)
-                normal = false
-            else
-                push!(y, typ)
-            end
-        end
-        if !normal
-            properx = rewrap_unionall(Union{y...}, properx)
-        end
-    end
     has_free_typevars(properx) && return Any
     return properx
 end
 
 function make_typealias(@nospecialize(x::Type))
-    Any <: x && return
+    Any === x && return
     x <: Tuple && return
     mods = modulesof!(Set{Module}(), x)
     Core in mods && push!(mods, Base)
@@ -555,7 +541,7 @@ function make_typealias(@nospecialize(x::Type))
         for name in names(mod)
             if isdefined(mod, name) && !isdeprecated(mod, name) && isconst(mod, name)
                 alias = getfield(mod, name)
-                if alias isa Type && !has_free_typevars(alias) && !isvarargtype(alias) && !print_without_params(alias) && x <: alias
+                if alias isa Type && !has_free_typevars(alias) && !print_without_params(alias) && x <: alias
                     if alias isa UnionAll
                         (ti, env) = ccall(:jl_type_intersection_with_env, Any, (Any, Any), x, alias)::SimpleVector
                         # ti === Union{} && continue # impossible, since we already checked that x <: alias
@@ -681,7 +667,7 @@ function show_typealias(io::IO, x::Type)
 end
 
 function make_typealiases(@nospecialize(x::Type))
-    Any <: x && return Core.svec(), Union{}
+    Any === x && return Core.svec(), Union{}
     x <: Tuple && return Core.svec(), Union{}
     mods = modulesof!(Set{Module}(), x)
     Core in mods && push!(mods, Base)
@@ -698,10 +684,12 @@ function make_typealiases(@nospecialize(x::Type))
         for name in names(mod)
             if isdefined(mod, name) && !isdeprecated(mod, name) && isconst(mod, name)
                 alias = getfield(mod, name)
-                if alias isa Type && !has_free_typevars(alias) && !isvarargtype(alias) && !print_without_params(alias) && !(alias <: Tuple)
+                if alias isa Type && !has_free_typevars(alias) && !print_without_params(alias) && !(alias <: Tuple)
                     (ti, env) = ccall(:jl_type_intersection_with_env, Any, (Any, Any), x, alias)::SimpleVector
                     ti === Union{} && continue
-                    mod in modulesof!(Set{Module}(), alias) || continue # make sure this alias wasn't from an unrelated part of the Union
+                    # make sure this alias wasn't from an unrelated part of the Union
+                    mod2 = modulesof!(Set{Module}(), alias)
+                    mod in mod2 || (mod === Base && Core in mods) || continue
                     env = env::SimpleVector
                     applied = alias
                     if !isempty(env)
@@ -761,16 +749,21 @@ end
 function show_unionaliases(io::IO, x::Union)
     properx = makeproper(io, x)
     aliases, applied = make_typealiases(properx)
+    isempty(aliases) && return false
     first = true
+    tvar = false
     for typ in uniontypes(x)
-        if !isa(typ, TypeVar) && rewrap_unionall(typ, properx) <: applied
+        if isa(typ, TypeVar)
+            tvar = true # sort bare TypeVars to the end
+            continue
+        elseif rewrap_unionall(typ, properx) <: applied
             continue
         end
         print(io, first ? "Union{" : ", ")
         first = false
         show(io, typ)
     end
-    if first && length(aliases) == 1
+    if first && !tvar && length(aliases) == 1
         alias = aliases[1]
         wheres = make_wheres(io, alias[2], x)
         show_typealias(io, alias[1], x, alias[2], wheres)
@@ -784,30 +777,47 @@ function show_unionaliases(io::IO, x::Union)
             show_typealias(io, alias[1], x, alias[2], wheres)
             show_wheres(io, wheres)
         end
+        if tvar
+            for typ in uniontypes(x)
+                if isa(typ, TypeVar)
+                    print(io, ", ")
+                    show(io, typ)
+                end
+            end
+        end
         print(io, "}")
     end
+    return true
 end
 
 function show(io::IO, ::MIME"text/plain", @nospecialize(x::Type))
-    show(io, x)
-    if !print_without_params(x) && get(io, :compact, true)
+    if !print_without_params(x)
         properx = makeproper(io, x)
         if make_typealias(properx) !== nothing || (unwrap_unionall(x) isa Union && x <: make_typealiases(properx)[2])
-            print(io, " (alias for ")
-            show(IOContext(io, :compact => false), x)
-            print(io, ")")
+            show(IOContext(io, :compact => true), x)
+            if !(get(io, :compact, false)::Bool)
+                print(io, " (alias for ")
+                show(IOContext(io, :compact => false), x)
+                print(io, ")")
+            end
+            return
         end
     end
-
-    #s1 = sprint(show, x, context = io)
-    #s2 = sprint(show, x, context = IOContext(io, :compact => false))
-    #print(io, s1)
-    #if s1 != s2
-    #    print(io, " = ", s2)
-    #end
+    show(io, x)
+    # give a helpful hint for function types
+    if x isa DataType && x !== UnionAll && !(get(io, :compact, false)::Bool)
+        tn = x.name::Core.TypeName
+        globname = isdefined(tn, :mt) ? tn.mt.name : nothing
+        if is_global_function(tn, globname)
+            print(io, " (singleton type of function ")
+            show_sym(io, globname)
+            print(io, ", subtype of Function)")
+        end
+    end
 end
 
-function show(io::IO, @nospecialize(x::Type))
+show(io::IO, @nospecialize(x::Type)) = _show_type(io, inferencebarrier(x))
+function _show_type(io::IO, @nospecialize(x::Type))
     if print_without_params(x)
         show_type_name(io, unwrap_unionall(x).name)
         return
@@ -817,12 +827,11 @@ function show(io::IO, @nospecialize(x::Type))
         show_datatype(io, x)
         return
     elseif x isa Union
-        if get(io, :compact, true)
-            show_unionaliases(io, x)
-        else
-            print(io, "Union")
-            show_delim_array(io, uniontypes(x), '{', ',', '}', false)
+        if get(io, :compact, true) && show_unionaliases(io, x)
+            return
         end
+        print(io, "Union")
+        show_delim_array(io, uniontypes(x), '{', ',', '}', false)
         return
     end
 
@@ -864,6 +873,18 @@ function isvisible(sym::Symbol, parent::Module, from::Module)
         isdefined(from, sym) # if we're going to return true, force binding resolution
 end
 
+function is_global_function(tn::Core.TypeName, globname::Union{Symbol,Nothing})
+    if globname !== nothing
+        globname_str = string(globname::Symbol)
+        if ('#' ∉ globname_str && '@' ∉ globname_str && isdefined(tn, :module) &&
+                isbindingresolved(tn.module, globname) && isdefined(tn.module, globname) &&
+                isconcretetype(tn.wrapper) && isa(getfield(tn.module, globname), tn.wrapper))
+            return true
+        end
+    end
+    return false
+end
+
 function show_type_name(io::IO, tn::Core.TypeName)
     if tn === UnionAll.name
         # by coincidence, `typeof(Type)` is a valid representation of the UnionAll type.
@@ -871,15 +892,7 @@ function show_type_name(io::IO, tn::Core.TypeName)
         return print(io, "UnionAll")
     end
     globname = isdefined(tn, :mt) ? tn.mt.name : nothing
-    globfunc = false
-    if globname !== nothing
-        globname_str = string(globname::Symbol)
-        if ('#' ∉ globname_str && '@' ∉ globname_str && isdefined(tn, :module) &&
-                isbindingresolved(tn.module, globname) && isdefined(tn.module, globname) &&
-                isconcretetype(tn.wrapper) && isa(getfield(tn.module, globname), tn.wrapper))
-            globfunc = true
-        end
-    end
+    globfunc = is_global_function(tn, globname)
     sym = (globfunc ? globname : tn.name)::Symbol
     globfunc && print(io, "typeof(")
     quo = false
@@ -1019,6 +1032,10 @@ function sourceinfo_slotnames(src::CodeInfo)
     names = Dict{String,Int}()
     printnames = Vector{String}(undef, length(slotnames))
     for i in eachindex(slotnames)
+        if slotnames[i] == :var"#unused#"
+            printnames[i] = "_"
+            continue
+        end
         name = string(slotnames[i])
         idx = get!(names, name, i)
         if idx != i || isempty(name)
@@ -1033,7 +1050,9 @@ function sourceinfo_slotnames(src::CodeInfo)
     return printnames
 end
 
-function show(io::IO, l::Core.MethodInstance)
+show(io::IO, l::Core.MethodInstance) = show_mi(io, l)
+
+function show_mi(io::IO, l::Core.MethodInstance, from_stackframe::Bool=false)
     def = l.def
     if isa(def, Method)
         if isdefined(def, :generator) && l === def.generator
@@ -1041,10 +1060,19 @@ function show(io::IO, l::Core.MethodInstance)
             show(io, def)
         else
             print(io, "MethodInstance for ")
-            show_tuple_as_call(io, def.name, l.specTypes)
+            show_tuple_as_call(io, def.name, l.specTypes; qualified=true)
         end
     else
         print(io, "Toplevel MethodInstance thunk")
+        # `thunk` is not very much information to go on. If this
+        # MethodInstance is part of a stacktrace, it gets location info
+        # added by other means.  But if it isn't, then we should try
+        # to print a little more identifying information.
+        if !from_stackframe
+            linetable = l.uninferred.linetable
+            line = isempty(linetable) ? "unknown" : (lt = linetable[1]::Union{LineNumberNode,Core.LineInfoNode}; string(lt.file, ':', lt.line))
+            print(io, " from ", def, " starting at ", line)
+        end
     end
 end
 
@@ -1062,11 +1090,11 @@ function show(io::IO, mi_info::Core.Compiler.Timings.InferenceFrameInfo)
         else
             print(io, "InferenceFrameInfo for ")
             argnames = [isa(a, Core.Const) ? (isa(a.val, Type) ? "" : a.val) : "" for a in mi_info.slottypes[1:mi_info.nargs]]
-            show_tuple_as_call(io, def.name, mi.specTypes, false, nothing, argnames, true)
+            show_tuple_as_call(io, def.name, mi.specTypes; argnames, qualified=true)
         end
     else
         linetable = mi.uninferred.linetable
-        line = isempty(linetable) ? "" : (lt = linetable[1]; string(lt.file) * ':' * string(lt.line))
+        line = isempty(linetable) ? "" : (lt = linetable[1]; string(lt.file, ':', lt.line))
         print(io, "Toplevel InferenceFrameInfo thunk from ", def, " starting at ", line)
     end
 end
@@ -1354,7 +1382,7 @@ function operator_associativity(s::Symbol)
 end
 
 is_expr(@nospecialize(ex), head::Symbol)         = isa(ex, Expr) && (ex.head === head)
-is_expr(@nospecialize(ex), head::Symbol, n::Int) = is_expr(ex, head) && length((ex::Expr).args) == n
+is_expr(@nospecialize(ex), head::Symbol, n::Int) = is_expr(ex, head) && length(ex.args) == n
 
 is_quoted(ex)            = false
 is_quoted(ex::QuoteNode) = true
@@ -1930,8 +1958,12 @@ function show_unquoted(io::IO, ex::Expr, indent::Int, prec::Int, quote_level::In
     # var-arg declaration or expansion
     # (i.e. "function f(L...) end" or "f(B...)")
     elseif head === :(...) && nargs == 1
-        show_unquoted(io, args[1], indent, 0, quote_level)
+        dotsprec = operator_precedence(:(:)) - 1
+        parens = dotsprec <= prec
+        parens && print(io, "(")
+        show_unquoted(io, args[1], indent, dotsprec, quote_level)
         print(io, "...")
+        parens && print(io, ")")
 
     elseif (nargs == 0 && head in (:break, :continue))
         print(io, head)
@@ -2214,7 +2246,9 @@ function print_within_stacktrace(io, s...; color=:normal, bold=false)
     end
 end
 
-function show_tuple_as_call(io::IO, name::Symbol, sig::Type, demangle=false, kwargs=nothing, argnames=nothing, qualified=false)
+function show_tuple_as_call(io::IO, name::Symbol, sig::Type;
+                            demangle=false, kwargs=nothing, argnames=nothing,
+                            qualified=false, hasfirst=true)
     # print a method signature tuple for a lambda definition
     if sig === Tuple
         print(io, demangle ? demangle_function_name(name) : name, "(...)")
@@ -2227,12 +2261,16 @@ function show_tuple_as_call(io::IO, name::Symbol, sig::Type, demangle=false, kwa
         env_io = IOContext(env_io, :unionall_env => sig.var)
         sig = sig.body
     end
+    n = 1
     sig = (sig::DataType).parameters
-    show_signature_function(env_io, sig[1], demangle, "", false, qualified)
+    if hasfirst
+        show_signature_function(env_io, sig[1], demangle, "", false, qualified)
+        n += 1
+    end
     first = true
     print_within_stacktrace(io, "(", bold=true)
     show_argnames = argnames !== nothing && length(argnames) == length(sig)
-    for i = 2:length(sig)  # fixme (iter): `eachindex` with offset?
+    for i = n:length(sig)  # fixme (iter): `eachindex` with offset?
         first || print(io, ", ")
         first = false
         if show_argnames
@@ -2260,7 +2298,7 @@ end
 function print_type_stacktrace(io, type; color=:normal)
     str = sprint(show, type, context=io)
     i = findfirst('{', str)
-    if isnothing(i) || !get(io, :backtrace, false)::Bool
+    if i === nothing || !get(io, :backtrace, false)::Bool
         printstyled(io, str; color=color)
     else
         printstyled(io, str[1:prevind(str,i)]; color=color)
@@ -2326,6 +2364,19 @@ function show(io::IO, tv::TypeVar)
         show_bound(io, ub)
     end
     nothing
+end
+
+function show(io::IO, vm::Core.TypeofVararg)
+    print(io, "Vararg")
+    if isdefined(vm, :T)
+        print(io, "{")
+        show(io, vm.T)
+        if isdefined(vm, :N)
+            print(io, ", ")
+            show(io, vm.N)
+        end
+        print(io, "}")
+    end
 end
 
 module IRShow
@@ -2719,6 +2770,7 @@ function showarg(io::IO, v::SubArray, toplevel)
     showindices(io, v.indices...)
     print(io, ')')
     toplevel && print(io, " with eltype ", eltype(v))
+    return nothing
 end
 showindices(io, ::Union{Slice,IdentityUnitRange}, inds...) =
     (print(io, ", :"); showindices(io, inds...))
@@ -2732,6 +2784,7 @@ function showarg(io::IO, r::ReshapedArray, toplevel)
     print(io, ", ", join(r.dims, ", "))
     print(io, ')')
     toplevel && print(io, " with eltype ", eltype(r))
+    return nothing
 end
 
 function showarg(io::IO, r::NonReshapedReinterpretArray{T}, toplevel) where {T}
@@ -2745,6 +2798,7 @@ function showarg(io::IO, r::ReshapedReinterpretArray{T}, toplevel) where {T}
     showarg(io, parent(r), false)
     print(io, ')')
     toplevel && print(io, " with eltype ", eltype(r))
+    return nothing
 end
 
 # printing iterators from Base.Iterators
@@ -2799,3 +2853,15 @@ end
 bitshow(B::BitArray) = bitshow(stdout, B)
 
 bitstring(B::BitArray) = sprint(bitshow, B)
+
+# printing OpaqueClosure
+function show(io::IO, oc::Core.OpaqueClosure)
+    A, R = typeof(oc).parameters
+    show_tuple_as_call(io, Symbol(""), A; hasfirst=false)
+    print(io, "::", R)
+    print(io, "->◌")
+end
+
+function show(io::IO, ::MIME"text/plain", oc::Core.OpaqueClosure{A, R}) where {A, R}
+    show(io, oc)
+end

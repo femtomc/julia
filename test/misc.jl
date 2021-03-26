@@ -728,6 +728,46 @@ let foo() = begin
     @test bar() == 1
 end
 
+@testset "@invoke macro" begin
+    # test against `invoke` doc example
+    let
+        f(x::Real) = x^2
+        f(x::Integer) = 1 + Base.@invoke f(x::Real)
+        @test f(2) == 5
+    end
+
+    let
+        f1(::Integer) = Integer
+        f1(::Real) = Real;
+        f2(x::Real) = _f2(x)
+        _f2(::Integer) = Integer
+        _f2(_) = Real
+        @test f1(1) === Integer
+        @test f2(1) === Integer
+        @test Base.@invoke(f1(1::Real)) === Real
+        @test Base.@invoke(f2(1::Real)) === Integer
+    end
+
+    # when argment's type annotation is omitted, it should be specified as `Any`
+    let
+        f(_) = Any
+        f(x::Integer) = Integer
+        @test f(1) === Integer
+        @test Base.@invoke(f(1::Any)) === Any
+        @test Base.@invoke(f(1)) === Any
+    end
+
+    # handle keyword arguments correctly
+    let
+        f(a; kw1 = nothing, kw2 = nothing) = a + max(kw1, kw2)
+        f(::Integer; kwargs...) = error("don't call me")
+
+        @test_throws Exception f(1; kw1 = 1, kw2 = 2)
+        @test 3 == Base.@invoke f(1::Any; kw1 = 1, kw2 = 2)
+        @test 3 == Base.@invoke f(1; kw1 = 1, kw2 = 2)
+    end
+end
+
 # Endian tests
 # For now, we only support little endian.
 # Add an `Sys.ARCH` test for big endian when/if we add support for that.
@@ -912,3 +952,15 @@ end
 @testset "issue #28188" begin
     @test `$(@__FILE__)` == let file = @__FILE__; `$file` end
 end
+
+# Test that read fault on a prot-none region does not incorrectly give
+# ReadOnlyMemoryEror, but rather crashes the program
+const MAP_ANONYMOUS_PRIVATE = Sys.isbsd() ? 0x1002 : 0x22
+let script = :(let ptr = Ptr{Cint}(ccall(:jl_mmap, Ptr{Cvoid},
+    (Ptr{Cvoid}, Csize_t, Cint, Cint, Cint, Int),
+    C_NULL, 16*1024, 0, $MAP_ANONYMOUS_PRIVATE, -1, 0)); try
+    unsafe_load(ptr)
+    catch e; println(e) end; end)
+    @test !success(`$(Base.julia_cmd()) -e $script`)
+end
+

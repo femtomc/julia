@@ -1,3 +1,4 @@
+#include "common.h"
 #include "../../src/jl_exported_funcs.inc"
 
 // On macOS, we need to prepend underscores on symbols

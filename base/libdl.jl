@@ -46,9 +46,12 @@ applicable.
 (RTLD_DEEPBIND, RTLD_FIRST, RTLD_GLOBAL, RTLD_LAZY, RTLD_LOCAL, RTLD_NODELETE, RTLD_NOLOAD, RTLD_NOW)
 
 """
-    dlsym(handle, sym)
+    dlsym(handle, sym; throw_error::Bool = true)
 
 Look up a symbol from a shared library handle, return callable function pointer on success.
+
+If the symbol cannot be found, this method throws an error, unless the keyword argument
+`throw_error` is set to `false`, in which case this method returns `nothing`.
 """
 function dlsym(hnd::Ptr, s::Union{Symbol,AbstractString}; throw_error::Bool = true)
     hnd == C_NULL && throw(ArgumentError("NULL library handle"))
@@ -234,10 +237,9 @@ julia> dlpath("libjulia")
 ```
 """
 function dlpath(libname::Union{AbstractString, Symbol})
-    handle = dlopen(libname)
-    path = dlpath(handle)
-    dlclose(handle)
-    return path
+    dlopen(libname, RTLD_NOLOAD) do handle
+        return dlpath(handle)
+    end
 end
 
 if Sys.isapple()

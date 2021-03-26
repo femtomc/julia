@@ -410,7 +410,7 @@ function foo23996(xs...)
     bar(::AbstractFloat) = push!(rets, 2)
     bar(::Bool) = foobar()
     for x in xs
-	bar(x)
+        bar(x)
     end
     rets
 end
@@ -1218,7 +1218,7 @@ end
 # issue #22842
 f22842(x::UnionAll) = UnionAll
 f22842(x::DataType) = length(x.parameters)
-@test f22842(Tuple{Vararg{Int64,N} where N}) == 1
+@test f22842(Tuple{Vararg{Int64}}) == 1
 @test f22842(Tuple{Vararg{Int64,N}} where N) === UnionAll
 
 # issue #1153
@@ -4124,15 +4124,6 @@ let ex = quote
     @test ex.args[2] == :test
 end
 
-# issue #25652
-x25652 = 1
-x25652_2 = let (x25652, _) = (x25652, nothing)
-    x25652 = x25652 + 1
-    x25652
-end
-@test x25652_2 == 2
-@test x25652 == 1
-
 # issue #15180
 function f15180(x::T) where T
     X = Vector{T}(undef, 1)
@@ -5000,7 +4991,8 @@ gVararg(a::fVararg(Int)) = length(a)
     false
 catch e
     (e::ErrorException).msg
-end == "The function body AST defined by this @generated function is not pure. This likely means it contains a closure or comprehension."
+end == "The function body AST defined by this @generated function is not pure. " *
+       "This likely means it contains a closure, a comprehension or a generator."
 
 let x = 1
     global g18444
@@ -5305,6 +5297,16 @@ if Sys.WORD_SIZE == 64
         return
     end
     @test_nowarn tester20360()
+end
+
+# issue #39717
+let a = Base.StringVector(2^17)
+    b = String(a)
+    c = String(a)
+    GC.gc()
+    @test sizeof(a) == 0
+    @test sizeof(b) == 2^17
+    @test sizeof(c) == 0
 end
 
 @test_throws ArgumentError eltype(Bottom)
@@ -7009,7 +7011,6 @@ end
 @test_throws ArgumentError Array{Int, 2}(undef, -1, -1)
 
 # issue #28812
-@test Tuple{Vararg{Array{T},3} where T} === Tuple{Array,Array,Array}
 @test Tuple{Vararg{Array{T} where T,3}} === Tuple{Array,Array,Array}
 
 # issue #29145
@@ -7226,6 +7227,11 @@ end
 @test_broken isbitstype(Tuple{B33954})
 @test_broken isbitstype(B33954)
 
+struct B40050 <: Ref{Tuple{B40050}}
+end
+@test string((B40050(),)) == "($B40050(),)"
+@test_broken isbitstype(Tuple{B40050})
+
 # Issue #34206/34207
 function mre34206(a, n)
     va = view(a, :)
@@ -7288,11 +7294,27 @@ end
 
 # issue #36104
 module M36104
+using Test
 struct T36104
     v::Vector{M36104.T36104}
 end
 struct T36104   # check that redefining it works, issue #21816
     v::Vector{T36104}
+end
+# with a gensymmed unionall
+struct Symmetric{T,S<:AbstractMatrix{<:T}} <: AbstractMatrix{T}
+    data::S
+    uplo::Char
+end
+struct Symmetric{T,S<:AbstractMatrix{<:T}} <: AbstractMatrix{T}
+    data::S
+    uplo::Char
+end
+@test_throws ErrorException begin
+    struct Symmetric{T,S<:AbstractMatrix{T}} <: AbstractMatrix{T}
+        data::S
+        uplo::Char
+    end
 end
 end
 @test fieldtypes(M36104.T36104) == (Vector{M36104.T36104},)
@@ -7521,3 +7543,20 @@ for _ in 1:5
         @test all(x->ismissing(x.i), a)
     end
 end
+
+# Redefining types with Vararg
+abstract type RedefineVararg; end
+const RedefineVarargN{N} = Tuple{Vararg{RedefineVararg, N}}
+const RedefineVarargN{N} = Tuple{Vararg{RedefineVararg, N}}
+
+# NTuples with non-types
+@test NTuple{3, 2} == Tuple{2, 2, 2}
+
+# issue #18621
+function f18621()
+   g = (k(i) for i in 1:5)
+   k = identity
+   return collect(g)
+end
+@test f18621() == 1:5
+@test [_ for _ in 1:5] == 1:5

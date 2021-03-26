@@ -18,8 +18,8 @@ mutable struct InferenceState
     world::UInt
     valid_worlds::WorldRange
     nargs::Int
-    stmt_types::Vector{Any}
-    stmt_edges::Vector{Any}
+    stmt_types::Vector{Union{Nothing, Vector{Any}}} # ::Vector{Union{Nothing, VarTable}}
+    stmt_edges::Vector{Union{Nothing, Vector{Any}}}
     stmt_info::Vector{Any}
     # return type
     bestguess #::Type
@@ -67,8 +67,8 @@ mutable struct InferenceState
         stmt_info = Any[ nothing for i = 1:length(code) ]
 
         n = length(code)
-        s_edges = Any[ nothing for i = 1:n ]
-        s_types = Any[ nothing for i = 1:n ]
+        s_edges = Union{Nothing, Vector{Any}}[ nothing for i = 1:n ]
+        s_types = Union{Nothing, Vector{Any}}[ nothing for i = 1:n ]
 
         # initial types
         nslots = length(src.slotflags)
@@ -122,6 +122,29 @@ mutable struct InferenceState
         cached && push!(get_inference_cache(interp), result)
         return frame
     end
+end
+
+"""
+    Iterate through all callers of the given InferenceState in the abstract
+    interpretation stack (including the given InferenceState itself), vising
+    children before their parents (i.e. ascending the tree from the given
+    InferenceState). Note that cycles may be visited in any order.
+"""
+struct InfStackUnwind
+    inf::InferenceState
+end
+iterate(unw::InfStackUnwind) = (unw.inf, (unw.inf, 0))
+function iterate(unw::InfStackUnwind, (infstate, cyclei)::Tuple{InferenceState, Int})
+    # iterate through the cycle before walking to the parent
+    if cyclei < length(infstate.callers_in_cycle)
+        cyclei += 1
+        infstate = infstate.callers_in_cycle[cyclei]
+    else
+        cyclei = 0
+        infstate = infstate.parent
+    end
+    infstate === nothing && return nothing
+    (infstate::InferenceState, (infstate, cyclei))
 end
 
 method_table(interp::AbstractInterpreter, sv::InferenceState) = sv.method_table
@@ -194,6 +217,8 @@ function sptypes_from_meth_instance(linfo::MethodInstance)
                     ty = UnionAll(tv, Type{tv})
                 end
             end
+        elseif isa(v, Core.TypeofVararg)
+            ty = Int
         else
             ty = Const(v)
         end
@@ -245,21 +270,23 @@ end
 # temporarily accumulate our edges to later add as backedges in the callee
 function add_backedge!(li::MethodInstance, caller::InferenceState)
     isa(caller.linfo.def, Method) || return # don't add backedges to toplevel exprs
-    if caller.stmt_edges[caller.currpc] === nothing
-        caller.stmt_edges[caller.currpc] = []
+    edges = caller.stmt_edges[caller.currpc]
+    if edges === nothing
+        edges = caller.stmt_edges[caller.currpc] = []
     end
-    push!(caller.stmt_edges[caller.currpc], li)
+    push!(edges, li)
     nothing
 end
 
 # used to temporarily accumulate our no method errors to later add as backedges in the callee method table
 function add_mt_backedge!(mt::Core.MethodTable, @nospecialize(typ), caller::InferenceState)
     isa(caller.linfo.def, Method) || return # don't add backedges to toplevel exprs
-    if caller.stmt_edges[caller.currpc] === nothing
-        caller.stmt_edges[caller.currpc] = []
+    edges = caller.stmt_edges[caller.currpc]
+    if edges === nothing
+        edges = caller.stmt_edges[caller.currpc] = []
     end
-    push!(caller.stmt_edges[caller.currpc], mt)
-    push!(caller.stmt_edges[caller.currpc], typ)
+    push!(edges, mt)
+    push!(edges, typ)
     nothing
 end
 

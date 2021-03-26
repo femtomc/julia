@@ -31,7 +31,7 @@ showerror(io::IO, ex) = show(io, ex)
 
 show_index(io::IO, x::Any) = show(io, x)
 show_index(io::IO, x::Slice) = show_index(io, x.indices)
-show_index(io::IO, x::LogicalIndex) = show_index(io, x.mask)
+show_index(io::IO, x::LogicalIndex) = summary(io, x.mask)
 show_index(io::IO, x::OneTo) = print(io, "1:", x.stop)
 show_index(io::IO, x::Colon) = print(io, ':')
 
@@ -281,14 +281,11 @@ function showerror(io::IO, ex::MethodError)
         if any(x -> x <: AbstractArray{<:Number}, arg_types_param) &&
             any(x -> x <: Number, arg_types_param)
 
-            nouns = Dict{Any,String}(
-                Base.:+ => "addition",
-                Base.:- => "subtraction",
-            )
+            nounf = f === Base.:+ ? "addition" : "subtraction"
             varnames = ("scalar", "array")
             first, second = arg_types_param[1] <: Number ? varnames : reverse(varnames)
             fstring = f === Base.:+ ? "+" : "-"  # avoid depending on show_default for functions (invalidation)
-            print(io, "\nFor element-wise $(nouns[f]), use broadcasting with dot syntax: $first .$fstring $second")
+            print(io, "\nFor element-wise $nounf, use broadcasting with dot syntax: $first .$fstring $second")
         end
     end
     if ft <: AbstractArray
@@ -423,7 +420,7 @@ function show_method_candidates(io::IO, ex::MethodError, @nospecialize kwargs=()
                 # If isvarargtype then it checks whether the rest of the input arguments matches
                 # the varargtype
                 if Base.isvarargtype(sig[i])
-                    sigstr = (unwrap_unionall(sig[i]).parameters[1], "...")
+                    sigstr = (unwrap_unionall(sig[i]).T, "...")
                     j = length(t_i)
                 else
                     sigstr = (sig[i],)
@@ -460,7 +457,7 @@ function show_method_candidates(io::IO, ex::MethodError, @nospecialize kwargs=()
                 # It ensures that methods like f(a::AbstractString...) gets the correct
                 # number of right_matches
                 for t in arg_types_param[length(sig):end]
-                    if t <: rewrap_unionall(unwrap_unionall(sig[end]).parameters[1], method.sig)
+                    if t <: rewrap_unionall(unwrap_unionall(sig[end]).T, method.sig)
                         right_matches += 1
                     end
                 end
@@ -473,7 +470,7 @@ function show_method_candidates(io::IO, ex::MethodError, @nospecialize kwargs=()
                     for (k, sigtype) in enumerate(sig[length(t_i)+1:end])
                         sigtype = isvarargtype(sigtype) ? unwrap_unionall(sigtype) : sigtype
                         if Base.isvarargtype(sigtype)
-                            sigstr = ((sigtype::DataType).parameters[1], "...")
+                            sigstr = ((sigtype::Core.TypeofVararg).T, "...")
                         else
                             sigstr = (sigtype,)
                         end
@@ -573,17 +570,17 @@ stacktrace_linebreaks()::Bool =
     tryparse(Bool, get(ENV, "JULIA_STACKTRACE_LINEBREAKS", "false")) === true
 
 function show_full_backtrace(io::IO, trace::Vector; print_linebreaks::Bool)
-    n = length(trace)
-    ndigits_max = ndigits(n)
+    num_frames = length(trace)
+    ndigits_max = ndigits(num_frames)
 
     modulecolordict = copy(STACKTRACE_FIXEDCOLORS)
     modulecolorcycler = Iterators.Stateful(Iterators.cycle(STACKTRACE_MODULECOLORS))
 
     println(io, "\nStacktrace:")
 
-    for (i, frame) in enumerate(trace)
-        print_stackframe(io, i, frame, 1, ndigits_max, modulecolordict, modulecolorcycler)
-        if i < n
+    for (i, (frame, n)) in enumerate(trace)
+        print_stackframe(io, i, frame, n, ndigits_max, modulecolordict, modulecolorcycler)
+        if i < num_frames
             println(io)
             print_linebreaks && println(io)
         end
@@ -782,8 +779,7 @@ function show_backtrace(io::IO, t::Vector)
 
     try invokelatest(update_stackframes_callback[], filtered) catch end
     # process_backtrace returns a Vector{Tuple{Frame, Int}}
-    frames = map(x->first(x)::StackFrame, filtered)
-    show_full_backtrace(io, frames; print_linebreaks = stacktrace_linebreaks())
+    show_full_backtrace(io, filtered; print_linebreaks = stacktrace_linebreaks())
     return
 end
 

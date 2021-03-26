@@ -146,6 +146,8 @@
     XX(jl_dump_llvm_asm) \
     XX(jl_dump_method_asm) \
     XX(jl_egal) \
+    XX(jl_egal__bits) \
+    XX(jl_egal__special) \
     XX(jl_eh_restore_state) \
     XX(jl_enqueue_task) \
     XX(jl_enter_handler) \
@@ -177,12 +179,12 @@
     XX(jl_expand_with_loc_warn) \
     XX(jl_extern_c) \
     XX(jl_f__abstracttype) \
-    XX(jl_f_applicable) \
     XX(jl_f__apply) \
-    XX(jl_f__apply_in_world) \
     XX(jl_f__apply_iterate) \
-    XX(jl_f__apply_latest) \
     XX(jl_f__apply_pure) \
+    XX(jl_f__call_in_world) \
+    XX(jl_f__call_latest) \
+    XX(jl_f_applicable) \
     XX(jl_f_apply_type) \
     XX(jl_f_arrayref) \
     XX(jl_f_arrayset) \

@@ -71,6 +71,8 @@
     XX(jl_nothing_type) \
     XX(jl_number_type) \
     XX(jl_partial_struct_type) \
+    XX(jl_partial_opaque_type) \
+    XX(jl_interconditional_type) \
     XX(jl_phicnode_type) \
     XX(jl_phinode_type) \
     XX(jl_pinode_type) \
@@ -112,12 +114,12 @@
     XX(jl_uniontype_type) \
     XX(jl_upsilonnode_type) \
     XX(jl_vararg_type) \
-    XX(jl_vararg_typename) \
     XX(jl_vecelement_typename) \
     XX(jl_void_type) \
     XX(jl_voidpointer_type) \
-    XX(jl_weakref_type)
-
+    XX(jl_weakref_type) \
+    XX(jl_opaque_closure_type) \
+    XX(jl_opaque_closure_typename)
 
 // Data symbols that are defined inside the public libjulia
 #define JL_EXPORTED_DATA_SYMBOLS(XX) \

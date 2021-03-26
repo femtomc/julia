@@ -797,12 +797,12 @@ end
 
 Base.exit_on_sigint(true)
 
-let exename = Base.julia_cmd()
+let exename = `$(Base.julia_cmd()) --startup-file=no --color=no`
     # Test REPL in dumb mode
     with_fake_pty() do pts, ptm
         nENV = copy(ENV)
         nENV["TERM"] = "dumb"
-        p = run(detach(setenv(`$exename --startup-file=no -q`, nENV)), pts, pts, pts, wait=false)
+        p = run(detach(setenv(`$exename -q`, nENV)), pts, pts, pts, wait=false)
         Base.close_stdio(pts)
         output = readuntil(ptm, "julia> ", keep=true)
         if ccall(:jl_running_on_valgrind, Cint,()) == 0
@@ -840,7 +840,7 @@ let exename = Base.julia_cmd()
     end
 
     # Test stream mode
-    p = open(`$exename --startup-file=no -q`, "r+")
+    p = open(`$exename -q`, "r+")
     write(p, "1\nexit()\n")
     @test read(p, String) == "1\n"
 end # let exename
@@ -1091,6 +1091,9 @@ end
 # PR 35277
 @test occursin("identical", sprint(show, help_result("===")))
 @test occursin("broadcast", sprint(show, help_result(".<=")))
+
+# Issue 39427
+@test occursin("does not exist", sprint(show, help_result(":=")))
 
 # Issue #25930
 

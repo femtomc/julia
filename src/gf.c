@@ -203,7 +203,6 @@ JL_DLLEXPORT jl_value_t *jl_methtable_lookup(jl_methtable_t *mt, jl_value_t *typ
 
 // ----- MethodInstance specialization instantiation ----- //
 
-JL_DLLEXPORT jl_method_t *jl_new_method_uninit(jl_module_t*);
 JL_DLLEXPORT jl_code_instance_t* jl_new_codeinst(
         jl_method_instance_t *mi, jl_value_t *rettype,
         jl_value_t *inferred_const, jl_value_t *inferred,
@@ -532,7 +531,7 @@ jl_value_t *jl_nth_slot_type(jl_value_t *sig, size_t i) JL_NOTSAFEPOINT
         return NULL;
     if (i < len-1)
         return jl_tparam(sig, i);
-    if (jl_is_vararg_type(jl_tparam(sig, len-1)))
+    if (jl_is_vararg(jl_tparam(sig, len-1)))
         return jl_unwrap_vararg(jl_tparam(sig, len-1));
     if (i == len-1)
         return jl_tparam(sig, i);
@@ -633,6 +632,10 @@ static void jl_compilation_sig(
                 }
                 continue;
             }
+        }
+
+        if (jl_is_vararg(elt)) {
+            continue;
         }
 
         if (jl_types_equal(elt, (jl_value_t*)jl_type_type)) { // elt == Type{T} where T
@@ -741,7 +744,10 @@ static void jl_compilation_sig(
         size_t j = i;
         int all_are_subtypes = 1;
         for (; j < jl_svec_len(*newparams); j++) {
-            if (!jl_subtype(jl_svecref(*newparams, j), lasttype)) {
+            jl_value_t *paramj = jl_svecref(*newparams, j);
+            if (jl_is_vararg(paramj))
+                paramj = jl_unwrap_vararg(paramj);
+            if (!jl_subtype(paramj, lasttype)) {
                 all_are_subtypes = 0;
                 break;
             }
@@ -754,8 +760,8 @@ static void jl_compilation_sig(
         }
         else {
             jl_value_t *unw = jl_unwrap_unionall(decl);
-            jl_value_t *lastdeclt = jl_tparam(unw, nargs - 1);
-            assert(jl_is_vararg_type(lastdeclt) && jl_nparams(unw) == nargs);
+            jl_value_t *lastdeclt = jl_tparam(unw, jl_nparams(unw) - 1);
+            assert(jl_is_vararg(lastdeclt));
             int nsp = jl_svec_len(sparams);
             if (nsp > 0 && jl_has_free_typevars(lastdeclt)) {
                 assert(jl_subtype_env_size(decl) == nsp);
@@ -816,7 +822,7 @@ JL_DLLEXPORT int jl_isa_compileable_sig(
                 nspec_max = nspec_min;
         }
         int isbound = (jl_va_tuple_kind((jl_datatype_t*)decl) == JL_VARARG_UNBOUND);
-        if (jl_is_vararg_type(jl_tparam(type, np - 1))) {
+        if (jl_is_vararg(jl_tparam(type, np - 1))) {
             if (!isbound || np < nspec_min || np > nspec_max)
                 return 0;
         }
@@ -825,7 +831,7 @@ JL_DLLEXPORT int jl_isa_compileable_sig(
                 return 0;
         }
     }
-    else if (np != nargs || jl_is_vararg_type(jl_tparam(type, np - 1))) {
+    else if (np != nargs || jl_is_vararg(jl_tparam(type, np - 1))) {
         return 0;
     }
 
@@ -834,7 +840,7 @@ JL_DLLEXPORT int jl_isa_compileable_sig(
         jl_value_t *decl_i = jl_nth_slot_type((jl_value_t*)decl, i);
         size_t i_arg = (i < nargs - 1 ? i : nargs - 1);
 
-        if (jl_is_vararg_type(elt)) {
+        if (jl_is_vararg(elt)) {
             elt = jl_unwrap_vararg(elt);
             if (jl_has_free_typevars(decl_i)) {
                 // TODO: in this case, answer semi-conservatively that these varargs are always compilable
@@ -958,7 +964,7 @@ static int concretesig_equal(jl_value_t *tt, jl_value_t *simplesig) JL_NOTSAFEPO
     jl_value_t **sigs = jl_svec_data(((jl_datatype_t*)simplesig)->parameters);
     size_t i, lensig = jl_nparams(simplesig);
     assert(lensig == jl_nparams(tt));
-    assert(lensig > 0 && !jl_is_vararg_type(jl_tparam(simplesig, lensig - 1)));
+    assert(lensig > 0 && !jl_is_vararg(jl_tparam(simplesig, lensig - 1)));
     for (i = 0; i < lensig; i++) {
         jl_value_t *decl = sigs[i];
         jl_value_t *a = types[i];
@@ -1025,7 +1031,7 @@ static jl_method_instance_t *cache_method(
         // In most cases `!jl_isa_compileable_sig(tt, definition))`,
         // although for some cases, (notably Varargs)
         // we might choose a replacement type that's preferable but not strictly better
-        cache_with_orig = !jl_subtype(compilationsig, definition->sig);
+        cache_with_orig = !jl_subtype((jl_value_t*)compilationsig, definition->sig);
     }
     // TODO: maybe assert(jl_isa_compileable_sig(compilationsig, definition));
     newmeth = jl_specializations_get_linfo(definition, (jl_value_t*)compilationsig, sparams);
@@ -1049,7 +1055,8 @@ static jl_method_instance_t *cache_method(
                 jl_svec_t *env = matc->sparams;
                 int k, l;
                 for (k = 0, l = jl_svec_len(env); k < l; k++) {
-                    if (jl_is_typevar(jl_svecref(env, k))) {
+                    jl_value_t *env_k = jl_svecref(env, k);
+                    if (jl_is_typevar(env_k) || jl_is_vararg(env_k)) {
                         unmatched_tvars = 1;
                         break;
                     }
@@ -1106,7 +1113,7 @@ static jl_method_instance_t *cache_method(
     newparams = NULL;
     for (i = 0; i < np; i++) {
         jl_value_t *elt = jl_svecref(cachett->parameters, i);
-        if (jl_is_vararg_type(elt)) {
+        if (jl_is_vararg(elt)) {
         }
         else if (jl_is_type_type(elt)) {
             // TODO: if (!jl_is_singleton(elt)) ...
@@ -1227,7 +1234,7 @@ static jl_value_t *get_intersect_matches(jl_typemap_t *defs, jl_typemap_entry_t 
     jl_value_t *va = NULL;
     if (l > 0) {
         va = jl_tparam(ttypes, l - 1);
-        if (jl_is_vararg_type(va))
+        if (jl_is_vararg(va))
             va = jl_unwrap_vararg(va);
         else
             va = NULL;
@@ -1530,6 +1537,7 @@ static jl_typemap_entry_t *do_typemap_search(jl_methtable_t *mt JL_PROPAGATES_RO
 
 static void jl_method_table_invalidate(jl_methtable_t *mt, jl_typemap_entry_t *methodentry, jl_method_t *method, size_t max_world)
 {
+    assert(!method->is_for_opaque_closure);
     method->deleted_world = methodentry->max_world = max_world;
     // drop this method from mt->cache
     struct invalidate_mt_env mt_cache_env;
@@ -1586,26 +1594,25 @@ JL_DLLEXPORT void jl_method_table_disable(jl_methtable_t *mt, jl_method_t *metho
 static int jl_type_intersection2(jl_value_t *t1, jl_value_t *t2, jl_value_t **isect, jl_value_t **isect2)
 {
     *isect2 = NULL;
-    *isect = jl_type_intersection(t1, t2);
+    int is_subty = 0;
+    *isect = jl_type_intersection_env_s(t1, t2, NULL, &is_subty);
     if (*isect == jl_bottom_type)
         return 0;
+    if (is_subty)
+        return 1;
+    // TODO: sometimes type intersection returns types with free variables
+    if (jl_has_free_typevars(t1) || jl_has_free_typevars(t2))
+        return 1;
     // determine if type-intersection can be convinced to give a better, non-bad answer
-    if (!(jl_subtype(*isect, t1) && jl_subtype(*isect, t2))) {
-        // if the intersection was imprecise, see if we can do
-        // better by switching the types
-        *isect2 = jl_type_intersection(t2, t1);
-        if (*isect2 == jl_bottom_type) {
-            *isect = jl_bottom_type;
-            *isect2 = NULL;
-            return 0;
-        }
-        if (jl_subtype(*isect2, t1) && jl_subtype(*isect2, t2)) {
-            *isect = *isect2;
-            *isect2 = NULL;
-        }
-        else if (jl_types_equal(*isect2, *isect)) {
-            *isect2 = NULL;
-        }
+    // if the intersection was imprecise, see if we can do better by switching the types
+    *isect2 = jl_type_intersection(t2, t1);
+    if (*isect2 == jl_bottom_type) {
+        *isect = jl_bottom_type;
+        *isect2 = NULL;
+        return 0;
+    }
+    if (jl_types_egal(*isect2, *isect)) {
+        *isect2 = NULL;
     }
     return 1;
 }
@@ -1818,7 +1825,7 @@ static void JL_NORETURN jl_method_error_bare(jl_function_t *f, jl_value_t *args,
         jl_static_show((JL_STREAM*)STDERR_FILENO,args); jl_printf((JL_STREAM*)STDERR_FILENO,"\n");
         jl_ptls_t ptls = jl_get_ptls_states();
         ptls->bt_size = rec_backtrace(ptls->bt_data, JL_MAX_BT_SIZE, 0);
-        jl_critical_error(0, NULL, ptls->bt_data, &ptls->bt_size);
+        jl_critical_error(0, NULL);
         abort();
     }
     // not reached
@@ -2452,10 +2459,8 @@ JL_DLLEXPORT jl_value_t *jl_gf_invoke_lookup_worlds(jl_value_t *types, size_t wo
     jl_method_match_t *matc = _gf_invoke_lookup(types, world, min_world, max_world);
     if (matc == NULL)
         return jl_nothing;
-    return (jl_value_t*)matc->method;
+    return (jl_value_t*)matc;
 }
-
-static jl_value_t *jl_gf_invoke_by_method(jl_method_t *method, jl_value_t *gf, jl_value_t **args, size_t nargs);
 
 // invoke()
 // this does method dispatch with a set of types to match other than the
@@ -2486,7 +2491,7 @@ jl_value_t *jl_gf_invoke(jl_value_t *types0, jl_value_t *gf, jl_value_t **args, 
     return jl_gf_invoke_by_method(method, gf, args, nargs);
 }
 
-static jl_value_t *jl_gf_invoke_by_method(jl_method_t *method, jl_value_t *gf, jl_value_t **args, size_t nargs)
+jl_value_t *jl_gf_invoke_by_method(jl_method_t *method, jl_value_t *gf, jl_value_t **args, size_t nargs)
 {
     jl_method_instance_t *mfunc = NULL;
     jl_typemap_entry_t *tm = NULL;
@@ -2682,7 +2687,7 @@ static jl_value_t *ml_matches(jl_methtable_t *mt, int offs,
     jl_value_t *va = NULL;
     if (l > 0) {
         va = jl_tparam(unw, l - 1);
-        if (jl_is_vararg_type(va))
+        if (jl_is_vararg(va))
             va = jl_unwrap_vararg(va);
         else
             va = NULL;
@@ -3139,7 +3144,7 @@ int jl_has_concrete_subtype(jl_value_t *typ)
     if (typ == jl_bottom_type)
         return 0;
     typ = jl_unwrap_unionall(typ);
-    if (jl_is_vararg_type(typ))
+    if (jl_is_vararg(typ))
         typ = jl_unwrap_vararg(typ);
     if (!jl_is_datatype(typ))
         return 1;

@@ -394,6 +394,9 @@ end
 Get the first `n` elements of the iterable collection `itr`, or fewer elements if `v` is not
 long enough.
 
+!!! compat "Julia 1.6"
+    This method requires at least Julia 1.6.
+
 # Examples
 ```jldoctest
 julia> first(["foo", "bar", "qux"], 2)
@@ -438,6 +441,9 @@ last(a) = a[end]
 
 Get the last `n` elements of the iterable collection `itr`, or fewer elements if `v` is not
 long enough.
+
+!!! compat "Julia 1.6"
+    This method requires at least Julia 1.6.
 
 # Examples
 ```jldoctest
@@ -1302,7 +1308,8 @@ end
 
 Return the underlying "parent array”. This parent array of objects of types `SubArray`, `ReshapedArray`
 or `LinearAlgebra.Transpose` is what was passed as an argument to `view`, `reshape`, `transpose`, etc.
-during object creation. If the input is not a wrapped object, return the input itself.
+during object creation. If the input is not a wrapped object, return the input itself. If the input is
+wrapped multiple times, only the outermost wrapper will be removed.
 
 # Examples
 ```jldoctest
@@ -1758,7 +1765,7 @@ typed_vcat(::Type{T}, X...) where T = cat_t(T, X...; dims=Val(1))
 typed_hcat(::Type{T}, X...) where T = cat_t(T, X...; dims=Val(2))
 
 """
-    cat(A...; dims=dims)
+    cat(A...; dims)
 
 Concatenate the input arrays along the specified dimensions in the iterable `dims`. For
 dimensions not in `dims`, all input arrays should have the same size, which will also be the
@@ -1792,6 +1799,10 @@ typed_hcat(T::Type, A::AbstractArray, B::AbstractArray) = cat_t(T, A, B; dims=Va
 typed_hcat(T::Type, A::AbstractArray...) = cat_t(T, A...; dims=Val(2))
 
 # 2d horizontal and vertical concatenation
+
+# these are produced in lowering if splatting occurs inside hvcat
+hvcat_rows(rows::Tuple...) = hvcat(map(length, rows), (rows...)...)
+typed_hvcat_rows(T::Type, rows::Tuple...) = typed_hvcat(T, map(length, rows), (rows...)...)
 
 function hvcat(nbc::Integer, as...)
     # nbc = # of block columns
@@ -2385,13 +2396,21 @@ pushfirst!(A, a, b, c...) = pushfirst!(pushfirst!(A, c...), a, b)
 
 ## hashing AbstractArray ##
 
+const hash_abstractarray_seed = UInt === UInt64 ? 0x7e2d6fb6448beb77 : 0xd4514ce5
 function hash(A::AbstractArray, h::UInt)
-    h = hash(AbstractArray, h)
+    h += hash_abstractarray_seed
     # Axes are themselves AbstractArrays, so hashing them directly would stack overflow
     # Instead hash the tuple of firsts and lasts along each dimension
     h = hash(map(first, axes(A)), h)
     h = hash(map(last, axes(A)), h)
-    isempty(A) && return h
+
+    # For short arrays, it's not worth doing anything complicated
+    if length(A) < 8192
+        for x in A
+            h = hash(x, h)
+        end
+        return h
+    end
 
     # Goal: Hash approximately log(N) entries with a higher density of hashed elements
     # weighted towards the end and special consideration for repeated values. Colliding
@@ -2422,7 +2441,7 @@ function hash(A::AbstractArray, h::UInt)
     n = 0
     while true
         n += 1
-        # Hash the current key-index and its element
+        # Hash the element
         elt = A[keyidx]
         h = hash(keyidx=>elt, h)
 

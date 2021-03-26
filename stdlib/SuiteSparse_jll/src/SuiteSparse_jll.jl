@@ -2,7 +2,7 @@
 
 ## dummy stub for https://github.com/JuliaBinaryWrappers/SuiteSparse_jll.jl
 baremodule SuiteSparse_jll
-using Base, Libdl, OpenBLAS_jll
+using Base, Libdl, libblastrampoline_jll
 Base.Experimental.@compiler_options compile=min optimize=0 infer=false
 
 const PATH_list = String[]
@@ -12,8 +12,8 @@ export libamd, libbtf, libcamd, libccolamd, libcholmod, libcolamd, libklu, libld
 
 # These get calculated in __init__()
 # Man I can't wait until these are automatically handled by an in-Base JLLWrappers clone.
-PATH = Ref("")
-LIBPATH = Ref("")
+const PATH = Ref("")
+const LIBPATH = Ref("")
 artifact_dir = ""
 libamd_handle = C_NULL
 libamd_path = ""
@@ -114,7 +114,7 @@ function __init__()
     global libumfpack_handle = dlopen(libumfpack)
     global libumfpack_path = dlpath(libumfpack_handle)
     global artifact_dir = dirname(Sys.BINDIR)
-    global LIBPATH[] = dirname(libsuitesparse_wrapper_path)
+    LIBPATH[] = dirname(libsuitesparse_wrapper_path)
     push!(LIBPATH_list, LIBPATH[])
 end
 
